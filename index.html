@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>SMART Observation Viewer</title>
+
+  <!-- SMART JS -->
+  <script src="https://cdn.jsdelivr.net/npm/fhirclient/build/fhir-client.min.js"></script>
+
+  <style>
+    body {
+      font-family: monospace;
+      white-space: pre-wrap;
+      padding: 1rem;
+    }
+    button {
+      margin-top: 1rem;
+      padding: 0.6rem 1.2rem;
+      font-size: 1rem;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>SMART on FHIR – SHIELD</h2>
+
+  <div id="info">Initializing...</div>
+
+  <button id="go">Send to SHIELD APP</button>
+
+  <script>
+    /**********************************************************
+     * 下游 SHIELD App
+     **********************************************************/
+    const SHINY_URL = "https://hrv-app-v4-0.onrender.com/";
+
+    // ⭐ 指定的 Observation ID*686714
+    const OBS_ID = "obs-HRV-003";
+    
+
+    let accessToken = null;
+    let fhirBase = null;
+    let pid = null;
+    let OBS_URL = null;
+
+    /**********************************************************
+     * SMART OAuth Ready
+     **********************************************************/
+    FHIR.oauth2.ready()
+      .then(client => {
+        // ✅ 讀 patient id
+        accessToken = client.state.tokenResponse.access_token;
+        fhirBase = client.state.serverUrl;
+        pid = client.patient.id;
+
+        if (!pid) {
+          throw new Error("No patient context (launch/patient missing)");
+        }
+
+        document.getElementById("info").textContent =
+          "✅ SMART OAuth Ready\n\n" +
+          "FHIR Server:\n" + fhirBase + "\n\n" +
+          "Selected Patient:\nPatient/" + pid + "\n\n" +
+          "Request:\n" +
+          `GET Observation?subject=Patient/${pid}&_id=${OBS_ID}\n\n` +
+          "Response:\n";
+
+        // ⭐ 精確搜尋
+        return client.request(
+          `Observation?subject=Patient/${pid}&_id=${OBS_ID}`
+        );
+      })
+      .then(bundle => {
+        // ❌ 沒找到
+        if (!bundle.entry || bundle.entry.length === 0) {
+          throw new Error(
+            `Observation _id=${OBS_ID} not found under Patient/${pid}`
+          );
+        }
+
+        // ❌ 理論上不該發生，但明確防呆
+        if (bundle.entry.length !== 1) {
+          throw new Error(
+            `Unexpected result: ${bundle.entry.length} Observations returned`
+          );
+        }
+
+        // ✅ 唯一合法情況：剛好 1 筆
+        const obs = bundle.entry[0].resource;
+
+        // 再次嚴格確認（語意安全）
+        if (obs.id !== OBS_ID) {
+          throw new Error("Returned Observation ID does not match requested _id");
+        }
+        if (obs.subject?.reference !== `Patient/${pid}`) {
+          throw new Error("Observation subject does not match selected patient");
+        }
+
+        OBS_URL = `${fhirBase}/Observation/${OBS_ID}`;
+
+        document.getElementById("info").textContent +=
+          JSON.stringify(obs, null, 2) +
+          "\n\n✅ Confirmed Observation:\n" +
+          OBS_URL;
+      })
+      .catch(err => {
+        document.getElementById("info").textContent =
+          "❌ Error:\n" + err.message;
+        console.error("SMART Error:", err);
+      });
+
+    /**********************************************************
+     * 傳遞給 SHIELD（token + pid + obs + fhir）
+     **********************************************************/
+    document.getElementById("go").onclick = () => {
+      if (!OBS_URL || !pid) {
+        alert("Observation not ready");
+        return;
+      }
+
+      const url =
+        SHINY_URL +
+        "?token=" + encodeURIComponent(accessToken) +
+        "&pid=" + encodeURIComponent(pid) +
+        "&obs=" + encodeURIComponent(OBS_URL) +
+        "&fhir=" + encodeURIComponent(fhirBase);
+
+      window.location.href = url;
+    };
+  </script>
+</body>
+</html>
